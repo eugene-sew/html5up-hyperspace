@@ -22,6 +22,7 @@
 							<li><a href="#intro">Welcome</a></li>
 							<li><a href="#one">Who we are</a></li>
 							<li><a href="#two">What we do</a></li>
+							<li><a href="#stress">CPU Stress Test</a></li>
 							<li><a href="#three">Get in touch</a></li>
 						</ul>
 					</nav>
@@ -126,6 +127,47 @@
 						</div>
 					</section>
 
+				<!-- CPU Stress Test -->
+					<section id="stress" class="wrapper style2 fade-up">
+						<div class="inner">
+							<h2>CPU Stress Test</h2>
+							<p>Simulate high CPU workloads directly in your browser. This tool utilizes Web Workers to run heavy mathematical computations in parallel, allowing you to test system stability and observe core activity in real-time.</p>
+							<div class="split style1">
+								<section>
+									<div class="fields">
+										<div class="field">
+											<label for="thread-slider" style="display: flex; justify-content: space-between;">
+												<span>Active Stress Threads</span>
+												<span id="thread-count-display">4 Threads</span>
+											</label>
+											<input type="range" id="thread-slider" min="1" max="16" value="4" step="1" style="width: 100%; margin-bottom: 2rem;" />
+										</div>
+									</div>
+									<ul class="actions">
+										<li><button id="btn-stress-toggle" class="button primary">Launch Stress Test</button></li>
+									</ul>
+								</section>
+								<section>
+									<div class="cpu-monitor-panel">
+										<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+											<h4 style="margin: 0; font-weight: 600;">Telemetry Dashboard</h4>
+											<span id="telemetry-status" style="font-size: 0.8rem; font-weight: bold; text-transform: uppercase; letter-spacing: 0.1em; color: #44bb44; display: flex; align-items: center; gap: 0.5rem;">
+												<span id="status-bulb" class="status-indicator idle"></span>
+												System Idle
+											</span>
+										</div>
+										<canvas id="cpu-canvas" style="width: 100%; height: 150px; background: #0f1020; border-radius: 4px; border: 1px solid rgba(255,255,255,0.05);"></canvas>
+										
+										<h5 style="margin: 1.5rem 0 0.5rem 0; font-size: 0.9rem;">Logical Cores Load</h5>
+										<div id="core-grid" class="core-grid">
+											<!-- Core indicator boxes will be generated dynamically -->
+										</div>
+									</div>
+								</section>
+							</div>
+						</div>
+					</section>
+
 				<!-- Three -->
 					<section id="three" class="wrapper style1 fade-up">
 						<div class="inner">
@@ -204,6 +246,229 @@
 			<script src="assets/js/breakpoints.min.js"></script>
 			<script src="assets/js/util.js"></script>
 			<script src="assets/js/main.js"></script>
+
+			<!-- CPU Stress Test Script -->
+			<script>
+				(function() {
+					// Web Worker code as string
+					const workerCode = `
+						self.onmessage = function(e) {
+							if (e.data === 'start') {
+								// Run continuous heavy calculations
+								function work() {
+									while (true) {
+										Math.sqrt(Math.random() * 1000000.0);
+									}
+								}
+								work();
+							}
+						};
+					`;
+					
+					const blob = new Blob([workerCode], { type: 'application/javascript' });
+					const workerUrl = URL.createObjectURL(blob);
+					
+					let activeWorkers = [];
+					let isStressing = false;
+					
+					const btnToggle = document.getElementById('btn-stress-toggle');
+					const slider = document.getElementById('thread-slider');
+					const display = document.getElementById('thread-count-display');
+					const statusText = document.getElementById('telemetry-status');
+					const statusBulb = document.getElementById('status-bulb');
+					const coreGrid = document.getElementById('core-grid');
+					
+					// Setup core telemetry UI based on actual system core count
+					const systemCores = navigator.hardwareConcurrency || 4;
+					
+					// Set slider defaults
+					slider.max = Math.max(16, systemCores * 2);
+					slider.value = systemCores;
+					updateSliderDisplay();
+					
+					// Generate core boxes
+					function generateCores() {
+						coreGrid.innerHTML = '';
+						for (let i = 0; i < systemCores; i++) {
+							const box = document.createElement('div');
+							box.className = 'core-box';
+							box.id = 'core-' + i;
+							box.innerHTML = '<span style="font-weight: 700;">CORE ' + (i + 1) + '</span><span class="load-text">0%</span>';
+							coreGrid.appendChild(box);
+						}
+					}
+					generateCores();
+					
+					function updateSliderDisplay() {
+						const threads = parseInt(slider.value);
+						if (threads === 1) {
+							display.textContent = '1 Thread';
+						} else {
+							display.textContent = threads + ' Threads' + (threads > systemCores ? ' (Overcommitted)' : '');
+						}
+					}
+					
+					slider.addEventListener('input', function() {
+						updateSliderDisplay();
+						if (isStressing) {
+							adjustWorkerCount(parseInt(slider.value));
+						}
+					});
+					
+					function adjustWorkerCount(targetCount) {
+						// Scale workers up or down dynamically
+						while (activeWorkers.length < targetCount) {
+							const w = new Worker(workerUrl);
+							w.postMessage('start');
+							activeWorkers.push(w);
+						}
+						while (activeWorkers.length > targetCount) {
+							const w = activeWorkers.pop();
+							w.terminate();
+						}
+						
+						// Update core grid highlights
+						updateCoreGrid(targetCount);
+					}
+					
+					function updateCoreGrid(activeCount) {
+						for (let i = 0; i < systemCores; i++) {
+							const box = document.getElementById('core-' + i);
+							if (!box) continue;
+							const loadText = box.querySelector('.load-text');
+							
+							if (isStressing) {
+								if (i < activeCount) {
+									box.classList.add('active');
+									// If overcommitted, share load representation
+									if (activeCount > systemCores) {
+										const pct = Math.min(100, Math.round((activeCount / systemCores) * 100));
+										loadText.textContent = pct + '%';
+									} else {
+										loadText.textContent = '100%';
+									}
+								} else {
+									box.classList.remove('active');
+									loadText.textContent = '0%';
+								}
+							} else {
+								box.classList.remove('active');
+								loadText.textContent = '0%';
+							}
+						}
+					}
+					
+					// Toggle click
+					btnToggle.addEventListener('click', function(e) {
+						e.preventDefault();
+						
+						if (!isStressing) {
+							// Start stress test
+							isStressing = true;
+							btnToggle.textContent = 'Stop Stress Test';
+							btnToggle.classList.add('stressing');
+							
+							statusText.style.color = '#eb5757';
+							statusText.innerHTML = '<span id="status-bulb" class="status-indicator stressing"></span>Stressing System';
+							
+							const targetCount = parseInt(slider.value);
+							adjustWorkerCount(targetCount);
+						} else {
+							// Stop stress test
+							isStressing = false;
+							btnToggle.textContent = 'Launch Stress Test';
+							btnToggle.classList.remove('stressing');
+							
+							statusText.style.color = '#44bb44';
+							statusText.innerHTML = '<span id="status-bulb" class="status-indicator idle"></span>System Idle';
+							
+							adjustWorkerCount(0);
+						}
+					});
+					
+					// Canvas animation
+					const canvas = document.getElementById('cpu-canvas');
+					const ctx = canvas.getContext('2d');
+					let animationId = null;
+					let offset = 0;
+					
+					// Handle retina displays
+					const dpr = window.devicePixelRatio || 1;
+					const rect = canvas.getBoundingClientRect();
+					canvas.width = rect.width * dpr;
+					canvas.height = rect.height * dpr;
+					ctx.scale(dpr, dpr);
+					
+					const width = rect.width;
+					const height = rect.height;
+					
+					function draw() {
+						ctx.clearRect(0, 0, width, height);
+						
+						// Draw background grid lines
+						ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+						ctx.lineWidth = 0.5;
+						for (let x = 0; x < width; x += 40) {
+							ctx.beginPath();
+							ctx.moveTo(x, 0);
+							ctx.lineTo(x, height);
+							ctx.stroke();
+						}
+						for (let y = 0; y < height; y += 30) {
+							ctx.beginPath();
+							ctx.moveTo(0, y);
+							ctx.lineTo(width, y);
+							ctx.stroke();
+						}
+						
+						if (!isStressing) {
+							// Draw calm wave
+							ctx.strokeStyle = 'rgba(68, 187, 68, 0.5)';
+							ctx.lineWidth = 1.5;
+							ctx.beginPath();
+							for (let x = 0; x < width; x += 2) {
+								const y = height / 2 + Math.sin((x + offset) * 0.015) * 8 * Math.sin(offset * 0.005);
+								if (x === 0) ctx.moveTo(x, y);
+								else ctx.lineTo(x, y);
+							}
+							ctx.stroke();
+							offset += 1.5;
+						} else {
+							// Draw multiple frantic waves based on active threads
+							const activeCount = activeWorkers.length;
+							const maxLines = Math.min(6, activeCount);
+							for (let t = 0; t < maxLines; t++) {
+								ctx.strokeStyle = 'hsla(' + (10 - t * 4) + ', 85%, 60%, ' + (0.3 + (0.5 / maxLines)) + ')';
+								ctx.lineWidth = 1.2;
+								ctx.beginPath();
+								const freq = 0.04 + (t * 0.01) + Math.sin(offset * 0.01 + t) * 0.01;
+								const amp = 15 + Math.random() * 20 + (activeCount * 2);
+								const tOffset = offset * (1.5 + t * 0.2);
+								for (let x = 0; x < width; x += 3) {
+									const noise = (Math.random() - 0.5) * 6;
+									const y = height / 2 + Math.sin((x + tOffset) * freq) * amp + noise;
+									if (x === 0) ctx.moveTo(x, y);
+									else ctx.lineTo(x, y);
+								}
+								ctx.stroke();
+							}
+							offset += 4;
+						}
+						
+						animationId = requestAnimationFrame(draw);
+					}
+					
+					draw();
+					
+					// Handle resize
+					window.addEventListener('resize', function() {
+						const rect = canvas.getBoundingClientRect();
+						canvas.width = rect.width * dpr;
+						canvas.height = rect.height * dpr;
+						ctx.scale(dpr, dpr);
+					});
+				})();
+			</script>
 
 	</body>
 </html>
